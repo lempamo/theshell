@@ -48,7 +48,7 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(QApplication::desktop(), SIGNAL(primaryScreenChanged()), this, SLOT(reloadScreens()));
 
     //Create the gateway and set required flags
-    gatewayMenu = new Menu(this);
+    gatewayMenu = new Menu(ui->phonesWidget, this);
     gatewayMenu->setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     connect(gatewayMenu, &Menu::menuClosing, [=]() {
         lockHide = false;
@@ -158,6 +158,10 @@ MainWindow::MainWindow(QWidget *parent) :
         }
     });
     connect(infoPane, SIGNAL(updateStruts()), this, SLOT(updateStruts()));
+    connect(infoPane, &InfoPaneDropdown::flightModeChanged, [=](bool flight) {
+        ui->flightIcon->setVisible(flight);
+        ui->StatusBarFlight->setVisible(flight);
+    });
     infoPane->getNetworks();
 
     QString loginSoundPath = settings.value("sounds/login", "").toString();
@@ -180,6 +184,10 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->LocationIndication->setVisible(false);
     ui->StatusBarLocation->setPixmap(QIcon::fromTheme("gps").pixmap(16 * getDPIScaling(), 16 * getDPIScaling()));
     ui->LocationIndication->setPixmap(QIcon::fromTheme("gps").pixmap(16 * getDPIScaling(), 16 * getDPIScaling()));
+    ui->flightIcon->setPixmap(QIcon::fromTheme("flight-mode").pixmap(16 * getDPIScaling(), 16 * getDPIScaling()));
+    ui->StatusBarFlight->setPixmap(QIcon::fromTheme("flight-mode").pixmap(16 * getDPIScaling(), 16 * getDPIScaling()));
+    ui->flightIcon->setVisible(settings.value("flightmode/on", false).toBool());
+    ui->StatusBarFlight->setVisible(settings.value("flightmode/on", false).toBool());
 
     connect(locationServices, &LocationServices::locationUsingChanged, [=](bool location) {
         ui->StatusBarLocation->setVisible(location);
@@ -445,40 +453,62 @@ void MainWindow::doUpdate() {
                 unsigned char *ret;
                 int width, height;
 
+                //Get all icon sizes
+                //QMap<int, QSize> iconSizes;
 
-                retval = XGetWindowProperty(d, win, XInternAtom(d, "_NET_WM_ICON", False), 0, 1, False,
-                                   XA_CARDINAL, &icReturnType, &icFormat, &icItems, &icBytes, &ret);
-                if (ret == 0x0) {
-                    noIcon = true;
-                } else {
-                    width = *(int*) ret;
-                    XFree(ret);
-                }
+                //do {
+                    retval = XGetWindowProperty(d, win, XInternAtom(d, "_NET_WM_ICON", False), 0, 1, False,
+                                       XA_CARDINAL, &icReturnType, &icFormat, &icItems, &icBytes, &ret);
+                    if (ret == 0x0) {
+                        noIcon = true;
+                    } else {
+                        width = *(int*) ret;
+                        XFree(ret);
+                    }
 
-                retval = XGetWindowProperty(d, win, XInternAtom(d, "_NET_WM_ICON", False), 1, 1, False,
-                                   XA_CARDINAL, &icReturnType, &icFormat, &icItems, &icBytes, &ret);
+                    retval = XGetWindowProperty(d, win, XInternAtom(d, "_NET_WM_ICON", False), 1, 1, False,
+                                       XA_CARDINAL, &icReturnType, &icFormat, &icItems, &icBytes, &ret);
 
-                if (ret == 0x0) {
-                    noIcon = true;
-                } else {
-                    height = *(int*) ret;
-                    XFree(ret);
-                }
+                    if (ret == 0x0) {
+                        noIcon = true;
+                    } else {
+                        height = *(int*) ret;
+                        XFree(ret);
+                    }
+
+                    //iconSizes.insert(offset, QSize(width, height));
+                    //offset += width * height * 4 + 2;
+                //} while (!noIcon || icBytes == width * height * 4);
 
                 if (!noIcon) {
+                    /*QSize currentSize = QSize(0, 0);
+
+                    for (int offsets : iconSizes.keys()) {
+                        if (currentSize == QSize(0, 0) || (currentSize.width() > iconSizes.value(offsets).width() && currentSize.height() > iconSizes.value(offsets).height())) {
+                            currentSize = iconSizes.value(offsets);
+                            imageOffset = offsets;
+                        }
+                    }*/
+
+                    //width = currentSize.width();
+                    //height = currentSize.height();
+
                     retval = XGetWindowProperty(d, win, XInternAtom(d, "_NET_WM_ICON", False), 2, width * height * 4, False,
                                        XA_CARDINAL, &icReturnType, &icFormat, &icItems, &icBytes, &icon);
 
-                    QImage image(width, height, QImage::Format_ARGB32);
+                    QImage image(16, 16, QImage::Format_ARGB32);
 
-                    for (int y = 0; y < height; y++) {
-                        for (int x = 0; x < width * 8; x = x + 8) {
+                    float widthSpacing = (float) width / (float) 16;
+                    float heightSpacing = (float) height / (float) 16;
+
+                    for (int y = 0; y < 16; y++) {
+                        for (int x = 0; x < 16 * 8; x = x + 8) {
                             unsigned long a, r, g, b;
 
-                            b = (icon[y * width * 8 + x + 0]);
-                            g = (icon[y * width * 8 + x + 1]);
-                            r = (icon[y * width * 8 + x + 2]);
-                            a = (icon[y * width * 8 + x + 3]);
+                            b = (icon[(int) (y * heightSpacing * width * 8 + x * widthSpacing + 0)]);
+                            g = (icon[(int) (y * heightSpacing * width * 8 + x * widthSpacing + 1)]);
+                            r = (icon[(int) (y * heightSpacing * width * 8 + x * widthSpacing + 2)]);
+                            a = (icon[(int) (y * heightSpacing * width * 8 + x * widthSpacing + 3)]);
 
                             QColor col = QColor(r, g, b, a);
 
@@ -766,7 +796,21 @@ void MainWindow::doUpdate() {
 
     //Update date and time
     ui->date->setText(QLocale().toString(QDateTime::currentDateTime(), "ddd dd MMM yyyy"));
-    ui->time->setText(QDateTime::currentDateTime().time().toString(Qt::TextDate));
+
+    if (settings.value("time/use24hour", true).toBool()) {
+        ui->time->setText(QDateTime::currentDateTime().time().toString("HH:mm:ss"));
+        ui->ampmLabel->setVisible(false);
+    } else {
+        QTime now = QDateTime::currentDateTime().time();
+        if (QDateTime::currentDateTime().time().hour() < 12) {
+            ui->ampmLabel->setText(QLocale().amText());
+        } else {
+            ui->ampmLabel->setText(QLocale().pmText());
+            now = now.addSecs(-43200);
+        }
+        ui->time->setText(now.toString("hh:mm:ss"));
+        ui->ampmLabel->setVisible(true);
+    }
     ui->StatusBarClock->setText(ui->time->text());
 
     mprisDetectedApps.clear();
@@ -951,55 +995,51 @@ void MainWindow::on_pushButton_2_clicked()
 }
 
 void MainWindow::internetLabelChanged(QString display, int signalStrength) {
-    if (display == tr("Flight Mode")) {
-        ui->networkLabel->setPixmap(getIconFromTheme("flight.svg", this->palette().color(QPalette::Window)).pixmap(16 * getDPIScaling(), 16 * getDPIScaling()));
+    ui->networkLabel->setText(display);
+    if (signalStrength == -1) {
         ui->networkStrength->setVisible(false);
+        ui->StatusBarNetwork->setVisible(false);
     } else {
-        ui->networkLabel->setText(display);
-        if (signalStrength == -1) {
-            ui->networkStrength->setVisible(false);
-        } else {
-            QIcon icon;
-            switch (signalStrength) {
-                case -5:
-                    icon = QIcon::fromTheme("network-wired-error");
-                    break;
-                case -4:
-                    icon = QIcon::fromTheme("network-wired-unavailable");
-                    break;
-                case -3:
-                    icon = QIcon::fromTheme("network-wireless-disconnected");
-                    break;
-                case -2:
-                    icon = QIcon::fromTheme("network-wireless-error");
-                    break;
-                case 0:
-                    icon = QIcon::fromTheme("network-wireless-connected-00");
-                    break;
-                case 1:
-                    icon = QIcon::fromTheme("network-wireless-connected-25");
-                    break;
-                case 2:
-                    icon = QIcon::fromTheme("network-wireless-connected-50");
-                    break;
-                case 3:
-                    icon = QIcon::fromTheme("network-wireless-connected-75");
-                    break;
-                case 4:
-                    icon = QIcon::fromTheme("network-wireless-connected-100");
-                    break;
-                case 5:
-                    icon = QIcon::fromTheme("network-wired-activated");
-                    break;
-                case 6:
-                    icon = QIcon::fromTheme("bluetooth-connected");
-                    break;
-            }
-
-            ui->networkStrength->setVisible(true);
-            ui->networkStrength->setPixmap(icon.pixmap(16 * getDPIScaling(), 16 * getDPIScaling()));
-            ui->StatusBarNetwork->setPixmap(icon.pixmap(16 * getDPIScaling(), 16 * getDPIScaling()));
+        QIcon icon;
+        switch (signalStrength) {
+            case -5:
+                icon = QIcon::fromTheme("network-wired-error");
+                break;
+            case -4:
+                icon = QIcon::fromTheme("network-wired-unavailable");
+                break;
+            case -3:
+                icon = QIcon::fromTheme("network-wireless-disconnected");
+                break;
+            case -2:
+                icon = QIcon::fromTheme("network-wireless-error");
+                break;
+            case 0:
+                icon = QIcon::fromTheme("network-wireless-connected-00");
+                break;
+            case 1:
+                icon = QIcon::fromTheme("network-wireless-connected-25");
+                break;
+            case 2:
+                icon = QIcon::fromTheme("network-wireless-connected-50");
+                break;
+            case 3:
+                icon = QIcon::fromTheme("network-wireless-connected-75");
+                break;
+            case 4:
+                icon = QIcon::fromTheme("network-wireless-connected-100");
+                break;
+            case 5:
+                icon = QIcon::fromTheme("network-wired-activated");
+                break;
+            case 6:
+                icon = QIcon::fromTheme("bluetooth-connected");
+                break;
         }
+
+        ui->networkStrength->setVisible(true);
+        ui->networkStrength->setPixmap(icon.pixmap(16 * getDPIScaling(), 16 * getDPIScaling()));
+        ui->StatusBarNetwork->setPixmap(icon.pixmap(16 * getDPIScaling(), 16 * getDPIScaling()));
     }
 }
 
@@ -1328,8 +1368,9 @@ void MainWindow::openMenu(bool openTotheWave, bool startListening) {
     } else {
         lockHide = true;
 
-        QRect screenGeometry = QApplication::desktop()->screenGeometry();
-        gatewayMenu->setGeometry(this->x() - gatewayMenu->width(), this->y() + this->height() - 1, gatewayMenu->width(), screenGeometry.height() - (this->height() + (this->y() - screenGeometry.y())) + 1);
+        //QRect screenGeometry = QApplication::desktop()->screenGeometry();
+        QRect availableGeometry = QApplication::desktop()->availableGeometry();
+        gatewayMenu->setGeometry(this->x() - gatewayMenu->width(), this->y() + this->height() - 1, gatewayMenu->width(), availableGeometry.height() - (this->height() + (this->y() - availableGeometry.y())) + 1);
         gatewayMenu->show(openTotheWave, startListening);
         gatewayMenu->setFocus();
     }

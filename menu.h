@@ -23,6 +23,9 @@
 #include "thewaveworker.h"
 #include "dbusevents.h"
 #include "tutorialwindow.h"
+#include "bthandsfree.h"
+#include <QtConcurrent>
+#include <QFutureWatcher>
 
 #undef KeyPress
 
@@ -57,7 +60,7 @@ class Menu : public QDialog
     Q_PROPERTY(QRect geometry READ geometry WRITE setGeometry)
 
 public:
-    explicit Menu(QWidget *parent = 0);
+    explicit Menu(BTHandsfree* bt, QWidget *parent = 0);
     ~Menu();
     void setGeometry(int x, int y, int w, int h);
     void setGeometry(QRect geometry);
@@ -164,8 +167,6 @@ private slots:
 
     void on_thewaveMedia_Back_clicked();
 
-    void on_listWidget_customContextMenuRequested(const QPoint &pos);
-
     void on_exitButton_clicked();
 
     void on_fakeEndButton_clicked();
@@ -175,6 +176,8 @@ private slots:
     void on_reportBugButton_clicked();
 
     void on_appsListView_clicked(const QModelIndex &index);
+
+    void on_appsListView_customContextMenuRequested(const QPoint &pos);
 
 private:
     Ui::Menu *ui;
@@ -196,6 +199,7 @@ private:
     void reject();
 
     theWaveWorker* waveWorker;
+    BTHandsfree* bt;
     bool isListening = false;
     bool istheWaveReady = false;
 };
@@ -206,24 +210,39 @@ class AppsListModel : public QAbstractListModel
     Q_OBJECT
 
 public:
-    AppsListModel(QObject *parent = 0);
+    AppsListModel(BTHandsfree* bt, QObject *parent = 0);
     ~AppsListModel();
 
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
 
     void updateData();
-    void loadData();
     int pinnedAppsCount;
     bool launchApp(QModelIndex index);
     void search(QString query);
 
     QList<App> availableApps();
 
+    QString currentQuery = "";
+
+public slots:
+    void loadData();
+
+signals:
+    void queryWave(QString query);
+
 private:
+    struct dataLoad {
+        QList<App> apps;
+        int pinnedAppsCount;
+    };
+
     QSettings settings;
     QList<App> apps;
     QList<App> appsShown;
+    QFuture<dataLoad> loadDataFuture;
+    bool queueLoadData = false;
+    BTHandsfree* bt;
 };
 
 class AppsDelegate : public QStyledItemDelegate

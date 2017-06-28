@@ -88,18 +88,32 @@
         <item>
          <layout class="QHBoxLayout" name="horizontalLayout">
           <item>
-           <widget class="ClickableLabel" name="time">
-            <property name="font">
-             <font>
-              <pointsize>15</pointsize>
-              <weight>75</weight>
-              <bold>true</bold>
-             </font>
+           <layout class="QHBoxLayout" name="horizontalLayout_10">
+            <property name="spacing">
+             <number>0</number>
             </property>
-            <property name="text">
-             <string notr="true">&amp;16:20:00</string>
-            </property>
-           </widget>
+            <item>
+             <widget class="ClickableLabel" name="time">
+              <property name="font">
+               <font>
+                <pointsize>15</pointsize>
+                <weight>75</weight>
+                <bold>true</bold>
+               </font>
+              </property>
+              <property name="text">
+               <string notr="true">&amp;16:20:00</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="ampmLabel">
+              <property name="text">
+               <string notr="true">a</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </item>
           <item>
            <widget class="ClickableLabel" name="date">
@@ -281,6 +295,13 @@
            <widget class="Line" name="line_2">
             <property name="orientation">
              <enum>Qt::Vertical</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="flightIcon">
+            <property name="text">
+             <string notr="true">Flight</string>
             </property>
            </widget>
           </item>
@@ -720,6 +741,13 @@
          </property>
          <property name="text">
           <string>16:20</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="StatusBarFlight">
+         <property name="text">
+          <string notr="true">Flight</string>
          </property>
         </widget>
        </item>

@@ -10,6 +10,8 @@ extern AudioManager* AudioMan;
 extern NativeEventFilter* NativeFilter;
 extern QTranslator *qtTranslator, *tsTranslator;
 extern float getDPIScaling();
+extern QDBusServiceWatcher* dbusServiceWatcher;
+extern QDBusServiceWatcher* dbusServiceWatcherSystem;
 
 InfoPaneDropdown::InfoPaneDropdown(NotificationDBus* notificationEngine, UPowerDBus* powerEngine, WId MainWindowId, QWidget *parent) :
     QDialog(parent),
@@ -21,6 +23,10 @@ InfoPaneDropdown::InfoPaneDropdown(NotificationDBus* notificationEngine, UPowerD
 
     startTime.start();
 
+    if (settings.value("flightmode/on", false).toBool()) {
+        ui->FlightSwitch->setChecked(true);
+    }
+
     this->MainWindowId = MainWindowId;
 
     this->notificationEngine = notificationEngine;
@@ -31,6 +37,11 @@ InfoPaneDropdown::InfoPaneDropdown(NotificationDBus* notificationEngine, UPowerD
     connect(notificationEngine, SIGNAL(removeNotification(int)), this, SLOT(removeNotification(int)));
     connect(notificationEngine, SIGNAL(NotificationClosed(uint,uint)), this, SLOT(notificationClosed(uint,uint)));
     connect(this, SIGNAL(closeNotification(int)), notificationEngine, SLOT(CloseNotificationUserInitiated(int)));
+
+    connect(dbusServiceWatcher, SIGNAL(serviceRegistered(QString)), this, SLOT(DBusServiceRegistered(QString)));
+    connect(dbusServiceWatcher, SIGNAL(serviceUnregistered(QString)), this, SLOT(DBusServiceUnregistered(QString)));
+    connect(dbusServiceWatcherSystem, SIGNAL(serviceRegistered(QString)), this, SLOT(DBusServiceRegistered(QString)));
+    connect(dbusServiceWatcherSystem, SIGNAL(serviceUnregistered(QString)), this, SLOT(DBusServiceUnregistered(QString)));
 
     QTimer *timer = new QTimer(this);
     connect(timer, SIGNAL(timeout()), this, SLOT(timerTick()));
@@ -103,21 +114,22 @@ InfoPaneDropdown::InfoPaneDropdown(NotificationDBus* notificationEngine, UPowerD
 
     {
         QDBusInterface interface("org.thesuite.tsbt", "/org/thesuite/tsbt", "org.thesuite.tsbt", QDBusConnection::sessionBus());
+        QDBusConnection::sessionBus().connect("org.thesuite.tsbt", "/org/thesuite/tsbt", "org.thesuite.tsbt", "BluetoothEnabledChanged", this, SLOT(bluetoothEnabledChanged()));
 
         if (interface.isValid()) {
-            ui->BluetoothSwitch->setEnabled(true);
-            ui->BluetoothSwitch->setChecked(interface.property("BluetoothEnabled").toBool());
-            QDBusConnection::sessionBus().connect("org.thesuite.tsbt", "/org/thesuite/tsbt", "org.thesuite.tsbt", "BluetoothEnabledChanged", this, SLOT(bluetoothEnabledChanged()));
+            DBusServiceRegistered("org.thesuite.tsbt");
         } else {
-            ui->BluetoothSwitch->setEnabled(false);
+            DBusServiceUnregistered("org.thesuite.tsbt");
         }
+
+        dbusServiceWatcher->addWatchedService("org.thesuite.tsbt");
     }
 
     connect(this, &InfoPaneDropdown::networkLabelChanged, [=](QString label) {
         ui->networkStatus->setText(label);
     });
 
-    ui->FlightSwitch->setOnIcon(getIconFromTheme("flight.svg", this->palette().color(QPalette::Window)));
+    ui->FlightSwitch->setOnIcon(QIcon::fromTheme("flight-mode"));
 
     //Set up theme button combo box
     int themeAccentColorIndex = themeSettings->value("color/accent", 0).toInt();
@@ -209,6 +221,7 @@ InfoPaneDropdown::InfoPaneDropdown(NotificationDBus* notificationEngine, UPowerD
     ui->HighContrastSwitch->setChecked(themeSettings->value("accessibility/highcontrast", false).toBool());
     ui->systemAnimationsAccessibilitySwitch->setChecked(themeSettings->value("accessibility/systemAnimations", true).toBool());
     ui->CapsNumLockBellSwitch->setChecked(themeSettings->value("accessibility/bellOnCapsNumLock", false).toBool());
+    ui->TwentyFourHourSwitch->setChecked(settings.value("time/use24hour", true).toBool());
     ui->themeButtonColor->setCurrentIndex(themeAccentColorIndex);
 
     QString defaultFont;
@@ -320,6 +333,20 @@ InfoPaneDropdown::~InfoPaneDropdown()
     delete ui;
 }
 
+void InfoPaneDropdown::DBusServiceRegistered(QString serviceName) {
+    if (serviceName == "org.thesuite.tsbt") {
+        QDBusInterface interface("org.thesuite.tsbt", "/org/thesuite/tsbt", "org.thesuite.tsbt", QDBusConnection::sessionBus());
+        ui->BluetoothSwitch->setEnabled(true);
+        ui->BluetoothSwitch->setChecked(interface.property("BluetoothEnabled").toBool());
+    }
+}
+
+void InfoPaneDropdown::DBusServiceUnregistered(QString serviceName) {
+    if (serviceName == "org.thesuite.tsbt") {
+        ui->BluetoothSwitch->setEnabled(false);
+    }
+}
+
 void InfoPaneDropdown::bluetoothEnabledChanged() {
     ui->BluetoothSwitch->setChecked(QDBusInterface("org.thesuite.tsbt", "/org/thesuite/tsbt", "org.thesuite.tsbt", QDBusConnection::sessionBus()).property("BluetoothEnabled").toBool());
 }
@@ -348,10 +375,14 @@ void InfoPaneDropdown::on_WifiSwitch_toggled(bool checked)
     if (i->property("WirelessEnabled").toBool() != checked) {
         i->setProperty("WirelessEnabled", checked);
     }
-    i->deleteLater();
-    if (!ui->WifiSwitch->isChecked()) {
-        ui->WifiSwitch->setChecked(checked);
+
+    if (i->property("WirelessEnabled").toBool()) {
+        ui->WifiSwitch->setChecked(true);
+    } else {
+        ui->WifiSwitch->setChecked(false);
     }
+
+    i->deleteLater();
 }
 
 void InfoPaneDropdown::processTimer() {
@@ -669,13 +700,13 @@ void InfoPaneDropdown::getNetworks() {
     QDBusReply<QList<QDBusObjectPath>> reply = i->call("GetDevices");
 
     //Create a variable to store text on main window
-    QString NetworkLabel = tr("Disconnected from the Internet");
+    QStringList NetworkLabel;
     int signalStrength = -1;
 
     //Check if we are in flight mode
     if (ui->FlightSwitch->isChecked()) {
         //Update text accordingly
-        NetworkLabel = "Flight Mode";
+        NetworkLabel.append(tr("Flight Mode"));
     }
 
     //Create an enum to store the type of network we're currently using.
@@ -726,7 +757,7 @@ void InfoPaneDropdown::getNetworks() {
                                                        QStringList(), hints, -1);
                         }
                     }
-                    NetworkLabel = tr("Connected over a wired connection");
+                    NetworkLabel.append(tr("Connected over a wired connection"));
                     NetworkLabelType = NetworkType::Wired;
                     signalStrength = 5;
                     allowAppendNoNetworkMessage = true;
@@ -747,7 +778,11 @@ void InfoPaneDropdown::getNetworks() {
                     }
 
                     if (signalStrength < 0) {
-                        signalStrength = -4;
+                        if (ui->FlightSwitch->isChecked()) {
+                            signalStrength = -1;
+                        } else {
+                            signalStrength = -4;
+                        }
                     }
                 }
                 delete wire;
@@ -781,22 +816,22 @@ void InfoPaneDropdown::getNetworks() {
                         case 50:
                         case 60:
                             connectedSsid = ap->property("Ssid").toString();
-                            NetworkLabel = tr("Connecting to %1...").arg(connectedSsid);
+                            NetworkLabel.append(tr("Connecting to %1...").arg(connectedSsid));
                             NetworkLabelType = NetworkType::Wireless;
                             break;
                         case 70:
                             connectedSsid = ap->property("Ssid").toString();
-                            NetworkLabel = tr("Getting IP address from %1...").arg(connectedSsid);
+                            NetworkLabel.append(tr("Getting IP address from %1...").arg(connectedSsid));
                             NetworkLabelType = NetworkType::Wireless;
                             break;
                         case 80:
                             connectedSsid = ap->property("Ssid").toString();
-                            NetworkLabel = tr("Doing some checks...");
+                            NetworkLabel.append(tr("Doing some checks..."));
                             NetworkLabelType = NetworkType::Wireless;
                             break;
                         case 90:
                             connectedSsid = ap->property("Ssid").toString();
-                            NetworkLabel = tr("Connecting to a secondary connection...");
+                            NetworkLabel.append(tr("Connecting to a secondary connection..."));
                             NetworkLabelType = NetworkType::Wireless;
                             break;
                         case 100: {
@@ -815,7 +850,7 @@ void InfoPaneDropdown::getNetworks() {
                                 signalStrength = 4;
                             }
 
-                            NetworkLabel = /*tr("Connected to %1").arg(connectedSsid);*/ connectedSsid;
+                            NetworkLabel.append(/*tr("Connected to %1").arg(connectedSsid);*/ connectedSsid);
                             NetworkLabelType = NetworkType::Wireless;
                             ui->networkMac->setText("MAC Address: " + wifi->property("PermHwAddress").toString());
                             if (!connectedNetworks.keys().contains(interface)) {
@@ -838,7 +873,7 @@ void InfoPaneDropdown::getNetworks() {
                         case 110:
                         case 120:
                             connectedSsid = ap->property("Ssid").toString();
-                            NetworkLabel = tr("Disconnecting from %1...").arg(connectedSsid);
+                            NetworkLabel.append(tr("Disconnecting from %1...").arg(connectedSsid));
                             NetworkLabelType = NetworkType::Wireless;
                             break;
                         }
@@ -910,7 +945,7 @@ void InfoPaneDropdown::getNetworks() {
                             }
                         }
 
-                        NetworkLabel = tr("Connected to %1 over Bluetooth").arg(bt->property("Name").toString());
+                        NetworkLabel.append(tr("Connected to %1 over Bluetooth").arg(bt->property("Name").toString()));
                         NetworkLabelType = NetworkType::Bluetooth;
                         signalStrength = 6;
                         allowAppendNoNetworkMessage = true;
@@ -945,9 +980,9 @@ void InfoPaneDropdown::getNetworks() {
             }
 
             if (networkOk == Unspecified) {
-                NetworkLabel.prepend(tr("Can't get to the internet") + " · ");
+                NetworkLabel.prepend(tr("Can't get to the internet"));
             } else if (networkOk == BehindPortal) {
-                NetworkLabel.prepend(tr("Login required") + " · ");
+                NetworkLabel.prepend(tr("Login required"));
             }
         }
 
@@ -957,7 +992,7 @@ void InfoPaneDropdown::getNetworks() {
         }
 
     } else {
-        NetworkLabel = tr("NetworkManager Error");
+        NetworkLabel.append(tr("NetworkManager Error"));
     }
 
 
@@ -1027,11 +1062,15 @@ void InfoPaneDropdown::getNetworks() {
 
     i->deleteLater();
 
+    if (NetworkLabel.count() == 0) {
+        NetworkLabel.append(tr("Disconnected from the Internet"));
+    }
+
     //Set the updating flag
     networkListUpdating = false;
 
     //Emit change signal
-    emit networkLabelChanged(NetworkLabel, signalStrength);
+    emit networkLabelChanged(NetworkLabel.join(" · "), signalStrength);
 }
 
 void InfoPaneDropdown::on_networkList_currentItemChanged(QListWidgetItem *current, QListWidgetItem*)
@@ -2502,6 +2541,12 @@ void InfoPaneDropdown::on_localeList_currentRowChanged(int currentRow)
         case Internationalisation::esES:
             settings.setValue("locale/language", "es_ES");
             break;
+        case Internationalisation::ruRU:
+            settings.setValue("locale/language", "ru_RU");
+            break;
+        case Internationalisation::svSE:
+            settings.setValue("locale/language", "sv_SE");
+            break;
     }
 
     QString localeName = settings.value("locale/language", "en_US").toString();
@@ -2773,4 +2818,31 @@ void InfoPaneDropdown::on_systemAnimationsAccessibilitySwitch_toggled(bool check
 void InfoPaneDropdown::on_CapsNumLockBellSwitch_toggled(bool checked)
 {
     themeSettings->setValue("accessibility/bellOnCapsNumLock", checked);
+}
+
+void InfoPaneDropdown::on_FlightSwitch_toggled(bool checked)
+{
+    //Set flags that persist between changes
+    settings.setValue("flightmode/on", checked);
+    if (checked) {
+        settings.setValue("flightmode/wifi", ui->WifiSwitch->isChecked());
+        settings.setValue("flightmode/bt", ui->BluetoothSwitch->isChecked());
+
+        //Disable bluetooth and WiFi.
+        ui->WifiSwitch->setChecked(false);
+        ui->BluetoothSwitch->setChecked(false);
+    } else {
+        //Enable bluetooth and WiFi.
+        ui->WifiSwitch->setChecked(settings.value("flightmode/wifi", true).toBool());
+        ui->BluetoothSwitch->setChecked(settings.value("flightmode/bt", true).toBool());
+    }
+
+    emit flightModeChanged(checked);
+
+    //Don't disable the switch as they may be switched on during flight
+}
+
+void InfoPaneDropdown::on_TwentyFourHourSwitch_toggled(bool checked)
+{
+    settings.setValue("time/use24hour", checked);
 }
